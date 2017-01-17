@@ -8,16 +8,22 @@
 #define min(a,b)    (((a) < (b)) ? (a) : (b))
 #define LEN 22
 
+long chr_len[22] = {249250621,243199373,198022430,191154276,180915260,171115067,159138663,146364022,141213431,135534747,135006516,133851895,115169878,107349540,102531392,90354753,81195210,78077248,59128983,63025520,48129895,51304566};
+
 void ReadFromActualResult(char * filename,Node * X[]);
 void ReadFromAccurityResult(char * filename, Node * Y[]);
 void ReadFromControlFreeCResult(char * filename,Node * Y[]);
 void ReadFromSequenzaResult(char * filename, Node * Y[]);
 
 double SumOfArea(Node * X[],int length);
-void IntersectGenRanges(Node * X[], Node * Y[], Node * XandY[],int length);
 void InitializeGenRanges(Node * X[], int length);
 void DeleteGenRanges(Node * X[], int length);
-double JaccardIndex(Node * X[], char * filename, void(*fun)(char * filename, Node * Y[]));
+void CreateGenomicSegments(Node * X[]);
+double SimilarityOfXtoY(Node * XonY[], int length);
+
+void CalRecallAndPrecision(Node * X[], char * filename, void(*fun)(char * filename, Node * Y[]), double * recall, double * precision);
+/*map genomic segments of Y to X,and the copynumber is abs(X.copynumber - Y.copynumber) */
+void YSegmentsMapOnX(Node * X[], Node * Y[], Node * XandY[], int length);
 
 int main(int argc,char * argv[])
 {
@@ -28,7 +34,7 @@ int main(int argc,char * argv[])
 	char file3[250];
 	FILE * f_in;
 	FILE * f_out;
-	double jaccard_index;
+	double recall,precision;
 	char softwarename[3][20];
 	void(*funcOrder[3])(char *,Node **);
 	char * t = "Accurity       ControlFreeC   sequenza       ";
@@ -59,17 +65,17 @@ int main(int argc,char * argv[])
 		}
 	}
 	f_out = fopen(argv[3], "w");
-	fprintf(f_out, "\t%s\t%s\t%s\n",softwarename[0],softwarename[1],softwarename[2]);
+	fprintf(f_out, "\t%s_r\t%s_p\t%s_r\t%s_p\t%s_r\t%s_p\n",softwarename[0],softwarename[0],softwarename[1],softwarename[1],softwarename[2],softwarename[2]);
 
 	while (4 == fscanf(f_in, "%s%s%s%s", purity, file1, file2, file3))
 	{
 		fprintf(f_out, "%s\t", purity);
-		jaccard_index = JaccardIndex(X, file1, funcOrder[0]);
-		fprintf(f_out, "%.15f\t", jaccard_index);
-		jaccard_index = JaccardIndex(X, file2, funcOrder[1]);
-		fprintf(f_out, "%.15f\t", jaccard_index);
-		jaccard_index = JaccardIndex(X, file3, funcOrder[2]);
-		fprintf(f_out, "%.15f\n", jaccard_index);
+		CalRecallAndPrecision(X,file1,funcOrder[0],&recall,&precision);
+		fprintf(f_out, "%.15f\t%.15f\t", recall, precision);
+		CalRecallAndPrecision(X,file2,funcOrder[1],&recall,&precision);
+		fprintf(f_out, "%.15f\t%.15f\t", recall, precision);
+		CalRecallAndPrecision(X,file3,funcOrder[2],&recall,&precision);
+		fprintf(f_out, "%.15f\t%.15f\n", recall, precision);
 	}
 	fclose(f_in);
 	fclose(f_out);
@@ -84,7 +90,7 @@ void ReadFromActualResult(char * filename,Node * X[])
 	char chr[10];
 	long start;
 	long end;
-	int copynumber;
+	float copynumber;
 
 	f_in = fopen(filename, "r");
 	if (NULL == f_in)
@@ -93,9 +99,9 @@ void ReadFromActualResult(char * filename,Node * X[])
 		exit(0);
 	}
 	fgets(temp, 100, f_in);   //skip header line
-	while (4 == fscanf(f_in, "%s%ld%ld%d", chr, &start, &end, &copynumber))
+	while (4 == fscanf(f_in, "%s%ld%ld%f", chr, &start, &end, &copynumber))
 	{
-		Item item = { start, end, copynumber+1 };
+		Item item = { start, end, copynumber };
 		sll_insert(&X[atoi(chr + 3)-1], item);
 
 	}
@@ -118,7 +124,7 @@ void ReadFromControlFreeCResult(char * filename, Node *Y[])
 	}
 	while (5 == fscanf(f_in, "%s%s%s%s%s", chr, start, end, copynumber, state))
 	{
-		if (strcmp("chrX", chr) == 0 || strcmp("chrY", chr) == 0)
+		if (strcmp("X", chr) == 0 || strcmp("Y", chr) == 0)
 			continue;
 		Item item = { atol(start), atol(end), atof(copynumber) };
 		sll_insert(&Y[atoi(chr) - 1], item);
@@ -175,6 +181,7 @@ void ReadFromSequenzaResult(char * filename, Node * Y[])
 	}
 	fclose(f_in);
 }
+
 double SumOfArea(Node * X[], int length)
 {
 	int i;
@@ -187,43 +194,11 @@ double SumOfArea(Node * X[], int length)
 		current = X[i];
 		while (NULL != current)
 		{
-			sum += (current->item.end - current->item.start + 1) * current->item.copynumber;
+			sum += current->item.end - current->item.start + 1;
 			current = current->link;
 		}
 	}
 	return sum;
-}
-
-void IntersectGenRanges(Node * X[], Node * Y[], Node * XandY[], int length)
-{
-	int i;
-	long start, end;
-	double copynumber;
-	Node * X_current;
-	Node * Y_current;
-
-	for (i = 0; i < length; i++)
-	{
-		if (NULL == X[i] || NULL == Y[i])
-			continue;
-		Y_current = Y[i];
-		while (NULL != Y_current)
-		{
-			X_current = X[i];
-			while (NULL != X_current)
-			{
-				start = max(Y_current->item.start, X_current->item.start);
-				end = min(Y_current->item.end, X_current->item.end);
-				if (start < end + 1)
-				{
-					Item item = { start, end, min(X_current->item.copynumber, Y_current->item.copynumber) };
-					sll_insert(&XandY[i], item);
-				}
-				X_current = X_current->link;
-			}
-			Y_current = Y_current->link;
-		}
-	}
 }
 
 void InitializeGenRanges(Node * X[], int length)
@@ -242,28 +217,98 @@ void DeleteGenRanges(Node * X[], int length)
 	}
 }
 
-double JaccardIndex(Node * X[], char * filename, void(*fun)(char * filename, Node * Y[]))
+void CreateGenomicSegments(Node * X[])
 {
-	double intersectarea, unionarea, jaccardIndex;
-	Node * XandY[LEN];
-	Node * Y[LEN];
 	int i;
-	InitializeGenRanges(Y, LEN);
-	InitializeGenRanges(XandY, LEN);
-	fun(filename, Y);
-	IntersectGenRanges(X, Y, XandY, LEN);
-	/*for (i = 0; i < LEN; i++)
+	long start,end;
+	Node * current;
+
+	for(i = 0;i < LEN; i++)
 	{
-		printf("chr%d\n", i + 1);
-		sll_shown(&XandY[i]);
-	}*/
-	intersectarea = SumOfArea(XandY, LEN);
-	//printf("intersectarea: %.15f\n", intersectarea);
-	unionarea = SumOfArea(X, LEN) + SumOfArea(Y, LEN) - intersectarea;
-	/*printf("X: %.15f\n", SumOfArea(X, LEN));
-	printf("Y: %.15f\n", SumOfArea(Y, LEN));*/
-	jaccardIndex = intersectarea / unionarea;
+		start = 1;
+		end = chr_len[i];
+		current = X[i];
+		while(current != NULL)
+		{
+			if(start < current->item.start)
+			{
+				Item item = {start, current->item.start - 1, 2};
+				sll_insert(&X[i], item);
+			}
+			start = current->item.end + 1;
+			current = current->link;
+		}
+		if (start <= end)
+		{
+			Item item = {start,end,2};
+			sll_insert(&X[i],item);
+		}
+	}
+}
+
+void YSegmentsMapOnX(Node * X[], Node * Y[], Node * XandY[], int length)
+{
+	int i;
+	long start, end;
+	Node * X_current;
+	Node * Y_current;
+
+	for (i = 0; i < length; i++)
+	{
+		if (NULL == X[i] || NULL == Y[i])
+			continue;
+		Y_current = Y[i];
+		while (NULL != Y_current)
+		{
+			X_current = X[i];
+			while (NULL != X_current)
+			{
+				start = max(Y_current->item.start, X_current->item.start);
+				end = min(Y_current->item.end, X_current->item.end);
+				if (start < end + 1)
+				{
+					Item item = { start, end, fabs(X_current->item.copynumber - Y_current->item.copynumber)};
+					sll_insert(&XandY[i], item);
+				}
+				X_current = X_current->link;
+			}
+			Y_current = Y_current->link;
+		}
+	}
+}
+
+double SimilarityOfXtoY(Node * XonY[],int length)
+{
+	int i;
+	double similarity = 0;
+	Node * current;
+	for (i = 0; i < length; i++)
+	{
+		if (NULL == XonY[i])
+			continue;
+		current = XonY[i];
+		while (NULL != current)
+		{
+			similarity += (current->item.end - current->item.start + 1) * exp(-(current->item.copynumber));
+			current = current->link;
+		}
+	}
+	return similarity;
+}
+
+void CalRecallAndPrecision(Node * X[], char * filename, void(*fun)(char * filename, Node * Y[]), double * recall, double * precision)
+{
+	Node * Y[LEN];
+	Node * XonY[LEN];
+	double similarity;
+
+	InitializeGenRanges(Y,LEN);
+	InitializeGenRanges(XonY,LEN);
+	fun(filename, Y);
+	YSegmentsMapOnX(X, Y, XonY, LEN);
+	similarity = SimilarityOfXtoY(XonY,LEN);
+	*recall = similarity/SumOfArea(X,LEN);
+	*precision = similarity/SumOfArea(Y,LEN);
 	DeleteGenRanges(Y, LEN);
-	DeleteGenRanges(XandY, LEN);
-	return jaccardIndex;
+	DeleteGenRanges(XonY, LEN);
 }

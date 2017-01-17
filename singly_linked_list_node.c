@@ -11,7 +11,7 @@ static void node_shown(Node * node);
 int sll_insert(Node ** rootp,Item new_value)
 {
 	Node * current,* newnode;
-	while((current=*rootp)!=NULL&&current->item.start<new_value.start)
+	while((current=*rootp)!=NULL && current->item.start < new_value.start)
 		rootp=&current->link;
 	newnode=(Node *)malloc(sizeof(Node));
 	if(newnode==NULL)
@@ -19,6 +19,23 @@ int sll_insert(Node ** rootp,Item new_value)
 	newnode->item=new_value;
 	newnode->link=current;
 	*rootp=newnode;
+	return TRUE;
+}
+
+int sll_copy(Node ** source, Node ** dest)
+{
+	Node * current, * newnode;
+	current = *source;
+	while(NULL != current)
+	{
+		newnode = (Node *)malloc(sizeof(Node));
+		if(NULL == newnode)
+			return FALSE;
+		newnode->item = current->item;
+		newnode->link = NULL;
+		*dest = newnode;
+		dest = &newnode->link;
+	}
 	return TRUE;
 }
 

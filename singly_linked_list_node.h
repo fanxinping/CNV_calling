@@ -29,4 +29,6 @@ void sll_shown(Node const ** rootp);
 
 void sll_delete(Node ** rootp);
 
+int sll_copy(Node ** source, Node ** dest);
+
 #endif
